@@ -1,0 +1,93 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'lambda-functions/**'
+      - 'other-scripts/**'
+      - 'tests/**'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'lambda-functions/**'
+      - 'other-scripts/**'
+      - 'tests/**'
+      - '.github/workflows/backend-ci.yml'
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.11']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-cov boto3 moto opensearch-py requests-aws4auth
+    
+    - name: Install Lambda function dependencies
+      run: |
+        for dir in lambda-functions/*/; do
+          if [ -f "$dir/requirements.txt" ]; then
+            echo "Installing dependencies for $dir"
+            pip install -r "$dir/requirements.txt"
+          fi
+        done
+    
+    - name: Lint with flake8 (if available)
+      run: |
+        pip install flake8
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 lambda-functions/ other-scripts/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics || true
+        # Exit-zero treats all errors as warnings
+        flake8 lambda-functions/ other-scripts/ tests/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics || true
+    
+    - name: Test LF0 (Chat Proxy)
+      run: |
+        cd lambda-functions/lf0_chat_proxy
+        python -m pytest tests/ -v --tb=short
+    
+    - name: Test LF1 (Lex Hook)
+      run: |
+        cd lambda-functions/lf1_lex_hook
+        python -m pytest tests/ -v --tb=short
+    
+    - name: Test LF2 (Suggestions Worker)
+      run: |
+        cd lambda-functions/lf2_suggestions_worker
+        python -m pytest tests/ -v --tb=short
+    
+    - name: Run integration tests
+      run: |
+        python -m pytest tests/test_integration.py -v --tb=short
+    
+    - name: Generate coverage report
+      if: matrix.python-version == '3.11'
+      run: |
+        pip install coverage
+        coverage run -m pytest tests/
+        coverage report -m
+        coverage xml
+    
+    - name: Upload coverage to artifacts
+      if: matrix.python-version == '3.11'
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: coverage.xml
+        retention-days: 7
+

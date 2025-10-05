@@ -1,0 +1,163 @@
+openapi: 3.0.0
+info:
+  title: Dining Concierge API
+  description: API for the dining concierge chatbot service
+  version: 1.0.0
+  contact:
+    name: Dining Concierge Team
+    email: support@diningconcierge.com
+
+servers:
+  - url: https://your-api-gateway-url.amazonaws.com/dev
+    description: Development server
+
+paths:
+  /chat:
+    post:
+      summary: Send a message to the dining concierge chatbot
+      description: Processes user messages and returns chatbot responses
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - message
+              properties:
+                message:
+                  type: string
+                  description: The user's message to the chatbot
+                  example: "I'm looking for Italian restaurants in Manhattan"
+                  minLength: 1
+                  maxLength: 1000
+                sessionId:
+                  type: string
+                  description: Optional session identifier for conversation continuity
+                  example: "abc123def"
+                  maxLength: 50
+      responses:
+        '200':
+          description: Successful response from the chatbot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    description: The chatbot's response message
+                    example: "I'd be happy to help you find Italian restaurants! What area of Manhattan are you interested in?"
+                  sessionId:
+                    type: string
+                    description: Session identifier for conversation continuity
+                    example: "abc123def"
+                  intentName:
+                    type: string
+                    description: The detected intent from the user's message
+                    example: "DiningSuggestionsIntent"
+                  slots:
+                    type: object
+                    description: Extracted slot values from the conversation
+                    additionalProperties:
+                      type: string
+                    example:
+                      cuisine: "Italian"
+                      location: "Manhattan"
+        '400':
+          description: Bad request - invalid input
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Message is required and cannot be empty"
+                  code:
+                    type: string
+                    example: "INVALID_INPUT"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "An internal error occurred while processing your request"
+                  code:
+                    type: string
+                    example: "INTERNAL_ERROR"
+
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Returns the health status of the API
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: "2023-10-01T12:00:00Z"
+                  version:
+                    type: string
+                    example: "1.0.0"
+
+components:
+  schemas:
+    ChatRequest:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        sessionId:
+          type: string
+          maxLength: 50
+    
+    ChatResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        sessionId:
+          type: string
+        intentName:
+          type: string
+        slots:
+          type: object
+          additionalProperties:
+            type: string
+    
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+security:
+  - ApiKeyAuth: []

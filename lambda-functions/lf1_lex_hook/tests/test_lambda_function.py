@@ -1,198 +1,402 @@
 import pytest
 import json
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, Mock
 import sys
 sys.path.append('..')
 
-from lambda_function import (
-    lambda_handler, 
-    validate_slots, 
-    validate_location, 
-    validate_cuisine, 
-    validate_dining_time, 
-    validate_party_size, 
-    validate_email
-)
+from lambda_function import lambda_handler, get_slot_value, close
 
-class TestValidators:
-    
-    def test_validate_location_valid(self):
-        assert validate_location("Manhattan") == True
-        assert validate_location("Upper East Side, Manhattan") == True
-        assert validate_location("NYC") == True
-        assert validate_location("Midtown Manhattan") == True
-    
-    def test_validate_location_invalid(self):
-        assert validate_location("Brooklyn") == False
-        assert validate_location("Queens") == False
-        assert validate_location("Los Angeles") == False
-    
-    def test_validate_cuisine_valid(self):
-        assert validate_cuisine("Italian") == True
-        assert validate_cuisine("chinese") == True
-        assert validate_cuisine("JAPANESE") == True
-    
-    def test_validate_cuisine_invalid(self):
-        assert validate_cuisine("Martian") == False
-        assert validate_cuisine("") == False
-    
-    def test_validate_dining_time_valid(self):
-        assert validate_dining_time("7:00 PM") == True
-        assert validate_dining_time("12:30 am") == True
-        assert validate_dining_time("today") == True
-        assert validate_dining_time("tomorrow") == True
-        assert validate_dining_time("2023-12-25") == True
-    
-    def test_validate_dining_time_invalid(self):
-        assert validate_dining_time("invalid time") == False
-        assert validate_dining_time("25:00") == False
-    
-    def test_validate_party_size_valid(self):
-        assert validate_party_size("1") == True
-        assert validate_party_size("10") == True
-        assert validate_party_size("20") == True
-    
-    def test_validate_party_size_invalid(self):
-        assert validate_party_size("0") == False
-        assert validate_party_size("21") == False
-        assert validate_party_size("abc") == False
-    
-    def test_validate_email_valid(self):
-        assert validate_email("test@example.com") == True
-        assert validate_email("user.name+tag@domain.co.uk") == True
-    
-    def test_validate_email_invalid(self):
-        assert validate_email("invalid-email") == False
-        assert validate_email("@domain.com") == False
-        assert validate_email("user@") == False
 
-class TestSlotValidation:
+class TestLexHookFunctions:
+    """Test LF1 Lex Hook functions"""
     
-    def test_validate_slots_all_valid(self):
-        result = validate_slots(
-            "Manhattan", 
-            "Italian", 
-            "7:00 PM", 
-            "4", 
-            "test@example.com"
-        )
-        assert result['isValid'] == True
+    def test_get_slot_value_with_value(self):
+        """Test getting slot value when it exists"""
+        slots = {
+            'Cuisine': {
+                'value': {
+                    'interpretedValue': 'Italian'
+                }
+            }
+        }
+        
+        result = get_slot_value(slots, 'Cuisine')
+        assert result == 'Italian'
     
-    def test_validate_slots_invalid_location(self):
-        result = validate_slots(
-            "Brooklyn", 
-            "Italian", 
-            "7:00 PM", 
-            "4", 
-            "test@example.com"
-        )
-        assert result['isValid'] == False
-        assert result['violatedSlot'] == 'Location'
+    def test_get_slot_value_missing_slot(self):
+        """Test getting slot value when slot doesn't exist"""
+        slots = {}
+        
+        result = get_slot_value(slots, 'Cuisine')
+        assert result is None
     
-    def test_validate_slots_invalid_party_size(self):
-        result = validate_slots(
-            "Manhattan", 
-            "Italian", 
-            "7:00 PM", 
-            "25", 
-            "test@example.com"
+    def test_get_slot_value_null_slot(self):
+        """Test getting slot value when slot is null"""
+        slots = {
+            'Cuisine': None
+        }
+        
+        result = get_slot_value(slots, 'Cuisine')
+        assert result is None
+    
+    def test_close_function_fulfilled(self):
+        """Test close function with fulfilled state"""
+        result = close(
+            {'key': 'value'},
+            'GreetingIntent',
+            'Fulfilled',
+            'Hello!'
         )
-        assert result['isValid'] == False
-        assert result['violatedSlot'] == 'PartySize'
+        
+        assert 'sessionState' in result
+        assert result['sessionState']['dialogAction']['type'] == 'Close'
+        assert result['sessionState']['intent']['name'] == 'GreetingIntent'
+        assert result['sessionState']['intent']['state'] == 'Fulfilled'
+        assert result['messages'][0]['content'] == 'Hello!'
 
-class TestLambdaHandler:
+
+class TestDiningSuggestionsIntent:
+    """Test DiningSuggestionsIntent handling"""
+    
+    @patch('lambda_function.boto3')
+    def test_dining_suggestions_all_slots_filled(self, mock_boto3):
+        """Test DiningSuggestionsIntent with all 5 slots filled including Location"""
+        mock_sqs = Mock()
+        mock_sqs.send_message.return_value = {'MessageId': 'test-123'}
+        mock_boto3.client.return_value = mock_sqs
+        
+        event = {
+            'invocationSource': 'FulfillmentCodeHook',
+            'sessionState': {
+                'intent': {
+                    'name': 'DiningSuggestionsIntent',
+                    'slots': {
+                        'Location': {
+                            'value': {
+                                'interpretedValue': 'Manhattan'
+                            }
+                        },
+                        'Cuisine': {
+                            'value': {
+                                'originalValue': 'Italian',
+                                'interpretedValue': 'italian'
+                            }
+                        },
+                        'DiningTime': {
+                            'value': {
+                                'interpretedValue': '7 PM'
+                            }
+                        },
+                        'PartySize': {
+                            'value': {
+                                'interpretedValue': '2'
+                            }
+                        },
+                        'Email': {
+                            'value': {
+                                'interpretedValue': 'test@example.com'
+                            }
+                        }
+                    }
+                },
+                'sessionAttributes': {}
+            }
+        }
+        
+        result = lambda_handler(event, None)
+        
+        assert result['sessionState']['dialogAction']['type'] == 'Close'
+        assert result['sessionState']['intent']['state'] == 'Fulfilled'
+        assert 'suggestions shortly' in result['messages'][0]['content'].lower()
+        
+        # Verify Location was sent to SQS
+        call_args = mock_sqs.send_message.call_args
+        message_body = json.loads(call_args[1]['MessageBody'])
+        assert message_body['location'] == 'Manhattan'
+    
+    def test_dining_suggestions_missing_slots(self):
+        """Test DiningSuggestionsIntent with missing slots (including Location)"""
+        event = {
+            'invocationSource': 'FulfillmentCodeHook',
+            'sessionState': {
+                'intent': {
+                    'name': 'DiningSuggestionsIntent',
+                    'slots': {
+                        'Location': None,
+                        'Cuisine': {
+                            'value': {
+                                'originalValue': 'Italian'
+                            }
+                        },
+                        'DiningTime': None,
+                        'PartySize': None,
+                        'Email': None
+                    }
+                },
+                'sessionAttributes': {}
+            }
+        }
+        
+        result = lambda_handler(event, None)
+        
+        # Should delegate back to Lex to collect remaining slots
+        assert result['sessionState']['dialogAction']['type'] == 'Delegate'
+    
+    @patch('lambda_function.boto3')
+    def test_dining_suggestions_with_location_verification(self, mock_boto3):
+        """Test that Location slot is properly collected and sent to SQS"""
+        mock_sqs = Mock()
+        mock_sqs.send_message.return_value = {'MessageId': 'test-456'}
+        mock_boto3.client.return_value = mock_sqs
+        
+        event = {
+            'invocationSource': 'FulfillmentCodeHook',
+            'sessionState': {
+                'intent': {
+                    'name': 'DiningSuggestionsIntent',
+                    'slots': {
+                        'Location': {
+                            'value': {
+                                'interpretedValue': 'Brooklyn'
+                            }
+                        },
+                        'Cuisine': {
+                            'value': {
+                                'originalValue': 'Chinese',
+                                'interpretedValue': 'chinese'
+                            }
+                        },
+                        'DiningTime': {
+                            'value': {
+                                'interpretedValue': '8 PM'
+                            }
+                        },
+                        'PartySize': {
+                            'value': {
+                                'interpretedValue': '4'
+                            }
+                        },
+                        'Email': {
+                            'value': {
+                                'interpretedValue': 'user@test.com'
+                            }
+                        }
+                    }
+                },
+                'sessionAttributes': {}
+            }
+        }
+        
+        result = lambda_handler(event, None)
+        
+        # Verify the message was sent
+        assert mock_sqs.send_message.called
+        
+        # Extract and verify the message content
+        call_args = mock_sqs.send_message.call_args
+        message_body = json.loads(call_args[1]['MessageBody'])
+        
+        # Verify all 5 required parameters are present
+        assert 'location' in message_body
+        assert 'cuisine' in message_body
+        assert 'dining_time' in message_body
+        assert 'party_size' in message_body
+        assert 'email' in message_body
+        
+        # Verify Location value is correct
+        assert message_body['location'] == 'Brooklyn'
+        assert message_body['cuisine'] == 'Chinese'
+
+
+class TestGreetingIntent:
+    """Test GreetingIntent handling"""
     
     def test_greeting_intent(self):
+        """Test GreetingIntent response"""
         event = {
-            'currentIntent': {
-                'name': 'GreetingIntent',
-                'slots': {}
-            },
-            'sessionAttributes': {}
+            'invocationSource': 'FulfillmentCodeHook',
+            'sessionState': {
+                'intent': {
+                    'name': 'GreetingIntent',
+                    'slots': {}
+                },
+                'sessionAttributes': {}
+            }
         }
         
-        result = lambda_handler(event, {})
+        result = lambda_handler(event, None)
         
-        assert result['dialogAction']['type'] == 'Close'
-        assert result['dialogAction']['fulfillmentState'] == 'Fulfilled'
-        assert 'dining concierge' in result['dialogAction']['message']['content'].lower()
+        assert result['sessionState']['dialogAction']['type'] == 'Close'
+        assert result['sessionState']['intent']['state'] == 'Fulfilled'
+        assert 'dining concierge' in result['messages'][0]['content'].lower()
+
+
+class TestThankYouIntent:
+    """Test ThankYouIntent handling"""
     
-    def test_thank_you_intent(self):
+    def test_thankyou_intent(self):
+        """Test ThankYouIntent response"""
         event = {
-            'currentIntent': {
-                'name': 'ThankYouIntent',
-                'slots': {}
-            },
-            'sessionAttributes': {}
+            'invocationSource': 'FulfillmentCodeHook',
+            'sessionState': {
+                'intent': {
+                    'name': 'ThankYouIntent',
+                    'slots': {}
+                },
+                'sessionAttributes': {}
+            }
         }
         
-        result = lambda_handler(event, {})
+        result = lambda_handler(event, None)
         
-        assert result['dialogAction']['type'] == 'Close'
-        assert result['dialogAction']['fulfillmentState'] == 'Fulfilled'
-        assert 'welcome' in result['dialogAction']['message']['content'].lower()
+        assert result['sessionState']['dialogAction']['type'] == 'Close'
+        assert result['sessionState']['intent']['state'] == 'Fulfilled'
+        assert 'welcome' in result['messages'][0]['content'].lower()
+
+
+class TestNewIntents:
+    """Test newly added intents"""
     
-    @patch.dict(os.environ, {'SQS_QUEUE_URL': 'https://sqs.us-east-1.amazonaws.com/123456789/test-queue'})
-    @patch('lambda_function.get_sqs_client')
-    def test_dining_suggestions_intent_complete(self, mock_get_sqs_client):
-        mock_sqs = MagicMock()
-        mock_get_sqs_client.return_value = mock_sqs
-        mock_sqs.send_message.return_value = {'MessageId': 'test-message-id'}
-        
+    def test_help_intent(self):
+        """Test HelpIntent response"""
         event = {
-            'currentIntent': {
-                'name': 'DiningSuggestionsIntent',
-                'slots': {
-                    'Location': 'Manhattan',
-                    'Cuisine': 'Italian',
-                    'DiningTime': '7:00 PM',
-                    'PartySize': '4',
-                    'Email': 'test@example.com'
-                }
-            },
-            'sessionAttributes': {}
+            'invocationSource': 'FulfillmentCodeHook',
+            'sessionState': {
+                'intent': {
+                    'name': 'HelpIntent',
+                    'slots': {}
+                },
+                'sessionAttributes': {}
+            }
         }
         
-        result = lambda_handler(event, {})
+        result = lambda_handler(event, None)
         
-        assert result['dialogAction']['type'] == 'Close'
-        assert result['dialogAction']['fulfillmentState'] == 'Fulfilled'
-        assert 'Italian restaurants' in result['dialogAction']['message']['content']
-        mock_sqs.send_message.assert_called_once()
+        assert result['sessionState']['dialogAction']['type'] == 'Close'
+        assert result['sessionState']['intent']['state'] == 'Fulfilled'
+        assert 'cuisine' in result['messages'][0]['content'].lower()
     
-    def test_dining_suggestions_intent_invalid_location(self):
+    def test_cancel_intent(self):
+        """Test CancelIntent response"""
         event = {
-            'currentIntent': {
-                'name': 'DiningSuggestionsIntent',
-                'slots': {
-                    'Location': 'Brooklyn',
-                    'Cuisine': 'Italian',
-                    'DiningTime': '7:00 PM',
-                    'PartySize': '4',
-                    'Email': 'test@example.com'
-                }
-            },
-            'sessionAttributes': {}
+            'invocationSource': 'FulfillmentCodeHook',
+            'sessionState': {
+                'intent': {
+                    'name': 'CancelIntent',
+                    'slots': {}
+                },
+                'sessionAttributes': {}
+            }
         }
         
-        result = lambda_handler(event, {})
+        result = lambda_handler(event, None)
         
-        assert result['dialogAction']['type'] == 'ElicitSlot'
-        assert result['dialogAction']['slotToElicit'] == 'Location'
-        assert 'Manhattan' in result['dialogAction']['message']['content']
+        assert result['sessionState']['dialogAction']['type'] == 'Close'
+        assert result['sessionState']['intent']['state'] == 'Fulfilled'
+        assert 'cancelled' in result['messages'][0]['content'].lower()
+    
+    def test_changemind_intent(self):
+        """Test ChangeMindIntent response (should clear session)"""
+        event = {
+            'invocationSource': 'FulfillmentCodeHook',
+            'sessionState': {
+                'intent': {
+                    'name': 'ChangeMindIntent',
+                    'slots': {}
+                },
+                'sessionAttributes': {'test': 'value'}
+            }
+        }
+        
+        result = lambda_handler(event, None)
+        
+        assert result['sessionState']['dialogAction']['type'] == 'Close'
+        assert result['sessionState']['intent']['state'] == 'Fulfilled'
+        # Session should be cleared
+        assert result['sessionState']['sessionAttributes'] == {}
+    
+    def test_restaurant_types_intent(self):
+        """Test RestaurantTypesIntent response"""
+        event = {
+            'invocationSource': 'FulfillmentCodeHook',
+            'sessionState': {
+                'intent': {
+                    'name': 'RestaurantTypesIntent',
+                    'slots': {}
+                },
+                'sessionAttributes': {}
+            }
+        }
+        
+        result = lambda_handler(event, None)
+        
+        assert result['sessionState']['dialogAction']['type'] == 'Close'
+        assert result['sessionState']['intent']['state'] == 'Fulfilled'
+        content = result['messages'][0]['content'].lower()
+        assert 'italian' in content or 'chinese' in content
+    
+    def test_location_intent(self):
+        """Test LocationIntent response"""
+        event = {
+            'invocationSource': 'FulfillmentCodeHook',
+            'sessionState': {
+                'intent': {
+                    'name': 'LocationIntent',
+                    'slots': {}
+                },
+                'sessionAttributes': {}
+            }
+        }
+        
+        result = lambda_handler(event, None)
+        
+        assert result['sessionState']['dialogAction']['type'] == 'Close'
+        assert result['sessionState']['intent']['state'] == 'Fulfilled'
+        assert 'manhattan' in result['messages'][0]['content'].lower()
+    
+    def test_feedback_intent(self):
+        """Test FeedbackIntent response"""
+        event = {
+            'invocationSource': 'FulfillmentCodeHook',
+            'sessionState': {
+                'intent': {
+                    'name': 'FeedbackIntent',
+                    'slots': {}
+                },
+                'sessionAttributes': {}
+            }
+        }
+        
+        result = lambda_handler(event, None)
+        
+        assert result['sessionState']['dialogAction']['type'] == 'Close'
+        assert result['sessionState']['intent']['state'] == 'Fulfilled'
+        assert 'feedback' in result['messages'][0]['content'].lower()
+
+
+class TestUnknownIntent:
+    """Test unknown intent handling"""
     
     def test_unknown_intent(self):
+        """Test handling of unknown intent"""
         event = {
-            'currentIntent': {
-                'name': 'UnknownIntent',
-                'slots': {}
-            },
-            'sessionAttributes': {}
+            'invocationSource': 'FulfillmentCodeHook',
+            'sessionState': {
+                'intent': {
+                    'name': 'UnknownIntent',
+                    'slots': {}
+                },
+                'sessionAttributes': {}
+            }
         }
         
-        result = lambda_handler(event, {})
+        result = lambda_handler(event, None)
         
-        assert result['dialogAction']['type'] == 'Close'
-        assert result['dialogAction']['fulfillmentState'] == 'Fulfilled'
-        assert "didn't understand" in result['dialogAction']['message']['content']
+        assert result['sessionState']['dialogAction']['type'] == 'Close'
+        # Should have a fallback response
+        assert len(result['messages']) > 0
+
+
+if __name__ == '__main__':
+    pytest.main([__file__, '-v'])

@@ -96,7 +96,7 @@ class TestRestaurantProcessing:
             }
         }
         
-        result = get_restaurant_details_from_dynamodb(['test-id'])
+        result = get_restaurant_details_from_dynamodb(['test-id'], 'test-request-id', 'test-message-id')
         
         assert len(result) == 1
         assert result[0]['name'] == 'Test Restaurant'
@@ -112,7 +112,7 @@ class TestRestaurantProcessing:
         
         mock_table.get_item.return_value = {}
         
-        result = get_restaurant_details_from_dynamodb(['nonexistent-id'])
+        result = get_restaurant_details_from_dynamodb(['nonexistent-id'], 'test-request-id', 'test-message-id')
         
         assert len(result) == 0
 
@@ -135,14 +135,15 @@ class TestMessageProcessing:
                 'dining_time': '7:00 PM',
                 'party_size': '4',
                 'email': 'test@example.com'
-            })
+            }),
+            'MessageId': 'test-msg-id-123'
         }
         
-        result = process_dining_request(message)
+        result = process_dining_request(message, 'test-request-id')
         
         assert result == True
-        mock_get_recs.assert_called_once_with('Italian')
-        mock_get_details.assert_called_once_with(['restaurant-1', 'restaurant-2'])
+        mock_get_recs.assert_called_once_with('Italian', 'test-request-id', 'test-msg-id-123')
+        mock_get_details.assert_called_once_with(['restaurant-1', 'restaurant-2'], 'test-request-id', 'test-msg-id-123')
         mock_send_email.assert_called_once()
     
     @patch('lambda_function.send_no_results_email')
@@ -157,10 +158,11 @@ class TestMessageProcessing:
                 'dining_time': '7:00 PM',
                 'party_size': '4',
                 'email': 'test@example.com'
-            })
+            }),
+            'MessageId': 'test-msg-id-456'
         }
         
-        result = process_dining_request(message)
+        result = process_dining_request(message, 'test-request-id')
         
         assert result == True
         mock_send_no_results.assert_called_once()
@@ -170,19 +172,21 @@ class TestMessageProcessing:
             'Body': json.dumps({
                 'location': 'Manhattan',
                 'cuisine': 'Italian'
-            })
+            }),
+            'MessageId': 'test-msg-id-789'
         }
         
-        result = process_dining_request(message)
+        result = process_dining_request(message, 'test-request-id')
         
         assert result == False
     
     def test_process_dining_request_invalid_json(self):
         message = {
-            'Body': 'invalid json'
+            'Body': 'invalid json',
+            'MessageId': 'test-msg-id-invalid'
         }
         
-        result = process_dining_request(message)
+        result = process_dining_request(message, 'test-request-id')
         
         assert result == False
 

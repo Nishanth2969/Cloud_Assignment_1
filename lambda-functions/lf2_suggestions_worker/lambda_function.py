@@ -25,122 +25,173 @@ def get_ses_client():
 
 
 def lambda_handler(event, context):
-    logger.info(f"Received event: {json.dumps(event)}")
+    # Get Lambda request ID for tracking
+    request_id = context.request_id if context else 'unknown'
+    
+    logger.info(f"[RequestId: {request_id}] Received event: {json.dumps(event)}")
 
     try:
         queue_url = os.environ.get('SQS_QUEUE_URL')
         if not queue_url:
-            logger.error("SQS_QUEUE_URL environment variable not set")
+            logger.error(f"[RequestId: {request_id}] SQS_QUEUE_URL environment variable not set")
             return {'statusCode': 500, 'body': 'Configuration error'}
 
-        messages = receive_messages_from_sqs(queue_url)
+        messages = receive_messages_from_sqs(queue_url, request_id)
 
         if not messages:
-            logger.info("No messages to process")
+            logger.info(f"[RequestId: {request_id}] No messages to process")
             return {'statusCode': 200, 'body': 'No messages processed'}
 
         processed_count = 0
         failed_count = 0
 
         for message in messages:
+            message_id = message.get('MessageId', 'unknown')
             try:
-                if process_dining_request(message):
-                    delete_message_from_sqs(queue_url, message['ReceiptHandle'])
+                # Process the message - only delete if successful
+                if process_dining_request(message, request_id):
+                    delete_message_from_sqs(queue_url, message['ReceiptHandle'], message_id, request_id)
                     processed_count += 1
+                    logger.info(f"[RequestId: {request_id}] [MessageId: {message_id}] Successfully processed and deleted")
                 else:
+                    # Message processing failed - do NOT delete, let it retry
                     failed_count += 1
+                    logger.warning(f"[RequestId: {request_id}] [MessageId: {message_id}] Processing failed - message NOT deleted, will be retried")
             except Exception as e:
-                logger.error(f"Error processing message {message.get('MessageId', 'unknown')}: {str(e)}")
+                # Exception during processing - do NOT delete, let it retry
                 failed_count += 1
+                logger.error(
+                    f"[RequestId: {request_id}] [MessageId: {message_id}] "
+                    f"Exception during processing: {str(e)} - message NOT deleted, will be retried or moved to DLQ"
+                )
+                # Do NOT delete the message - SQS will retry or move to DLQ after maxReceiveCount
 
-        logger.info(f"Processed {processed_count} messages successfully, {failed_count} failed")
+        logger.info(f"[RequestId: {request_id}] Processed {processed_count} messages successfully, {failed_count} failed")
 
         return {
             'statusCode': 200,
             'body': json.dumps({
+                'requestId': request_id,
                 'processed': processed_count,
                 'failed': failed_count
             })
         }
 
     except Exception as e:
-        logger.error(f"Error in lambda handler: {str(e)}")
+        logger.error(f"[RequestId: {request_id}] Error in lambda handler: {str(e)}")
         return {'statusCode': 500, 'body': f'Error: {str(e)}'}
 
 
-def receive_messages_from_sqs(queue_url: str, max_messages: int = 10) -> List[Dict[str, Any]]:
+def receive_messages_from_sqs(queue_url: str, request_id: str, max_messages: int = 10) -> List[Dict[str, Any]]:
     try:
         sqs = get_sqs_client()
         response = sqs.receive_message(
             QueueUrl=queue_url,
             MaxNumberOfMessages=max_messages,
             WaitTimeSeconds=1,
-            MessageAttributeNames=['All']
+            MessageAttributeNames=['All'],
+            AttributeNames=['All']  # Include ApproximateReceiveCount for DLQ tracking
         )
 
         messages = response.get('Messages', [])
-        logger.info(f"Received {len(messages)} messages from SQS")
+        logger.info(f"[RequestId: {request_id}] Received {len(messages)} messages from SQS")
+        
+        # Log receive count for each message (for DLQ monitoring)
+        for msg in messages:
+            receive_count = msg.get('Attributes', {}).get('ApproximateReceiveCount', 'unknown')
+            message_id = msg.get('MessageId', 'unknown')
+            logger.info(f"[RequestId: {request_id}] [MessageId: {message_id}] Receive count: {receive_count}")
 
         return messages
 
     except Exception as e:
-        logger.error(f"Error receiving messages from SQS: {str(e)}")
+        logger.error(f"[RequestId: {request_id}] Error receiving messages from SQS: {str(e)}")
         return []
 
 
-def delete_message_from_sqs(queue_url: str, receipt_handle: str):
+def delete_message_from_sqs(queue_url: str, receipt_handle: str, message_id: str, request_id: str):
     try:
         sqs = get_sqs_client()
         sqs.delete_message(
             QueueUrl=queue_url,
             ReceiptHandle=receipt_handle
         )
-        logger.info("Message deleted from SQS")
+        logger.info(f"[RequestId: {request_id}] [MessageId: {message_id}] Message successfully deleted from SQS")
     except Exception as e:
-        logger.error(f"Error deleting message from SQS: {str(e)}")
+        logger.error(f"[RequestId: {request_id}] [MessageId: {message_id}] Error deleting message from SQS: {str(e)}")
 
 
-def process_dining_request(message: Dict[str, Any]) -> bool:
+def process_dining_request(message: Dict[str, Any], request_id: str) -> bool:
+    message_id = message.get('MessageId', 'unknown')
+    
     try:
         body = json.loads(message['Body'])
-        logger.info(f"Processing dining request: {body}")
+        logger.info(f"[RequestId: {request_id}] [MessageId: {message_id}] Processing dining request: {body}")
 
         required_fields = ['location', 'cuisine', 'dining_time', 'party_size', 'email']
         for field in required_fields:
             if field not in body:
-                logger.error(f"Missing required field: {field}")
+                logger.error(f"[RequestId: {request_id}] [MessageId: {message_id}] Missing required field: {field}")
                 return False
 
-        restaurant_ids = get_restaurant_recommendations(body['cuisine'])
+        restaurant_ids = get_restaurant_recommendations(body['cuisine'], request_id, message_id)
 
         if not restaurant_ids:
-            logger.warning(f"No restaurants found for cuisine: {body['cuisine']}")
-            send_no_results_email(body)
-            return True
+            logger.warning(f"[RequestId: {request_id}] [MessageId: {message_id}] No restaurants found for cuisine: {body['cuisine']}")
+            # Still try to send "no results" email
+            try:
+                send_no_results_email(body, request_id, message_id)
+                return True
+            except Exception as email_error:
+                logger.error(
+                    f"[RequestId: {request_id}] [MessageId: {message_id}] "
+                    f"Failed to send no-results email: {str(email_error)} - "
+                    f"Error type: {type(email_error).__name__}"
+                )
+                return False  # Failed to send email, will retry
 
-        restaurant_details = get_restaurant_details_from_dynamodb(restaurant_ids)
+        restaurant_details = get_restaurant_details_from_dynamodb(restaurant_ids, request_id, message_id)
 
         if restaurant_details:
-            send_recommendations_email(body, restaurant_details)
-            return True
+            # Critical: Email sending - if this fails, we must return False to retry
+            try:
+                send_recommendations_email(body, restaurant_details, request_id, message_id)
+                logger.info(f"[RequestId: {request_id}] [MessageId: {message_id}] Successfully sent recommendations email")
+                return True
+            except Exception as email_error:
+                # Log detailed error for DLQ debugging
+                logger.error(
+                    f"[RequestId: {request_id}] [MessageId: {message_id}] "
+                    f"FAILED to send recommendations email: {str(email_error)} - "
+                    f"Error type: {type(email_error).__name__} - "
+                    f"Recipient: {body.get('email', 'unknown')} - "
+                    f"Message will be retried or moved to DLQ after maxReceiveCount"
+                )
+                return False  # Email failed, do not delete message
         else:
-            logger.error("Failed to get restaurant details from DynamoDB")
+            logger.error(f"[RequestId: {request_id}] [MessageId: {message_id}] Failed to get restaurant details from DynamoDB")
             return False
 
     except json.JSONDecodeError as e:
-        logger.error(f"Error parsing message body: {str(e)}")
-        return False
+        logger.error(f"[RequestId: {request_id}] [MessageId: {message_id}] Error parsing message body: {str(e)}")
+        return False  # Invalid message format, will retry
     except Exception as e:
-        logger.error(f"Error processing dining request: {str(e)}")
-        return False
+        logger.error(
+            f"[RequestId: {request_id}] [MessageId: {message_id}] "
+            f"Unexpected error processing dining request: {str(e)} - "
+            f"Error type: {type(e).__name__}"
+        )
+        import traceback
+        logger.error(f"[RequestId: {request_id}] [MessageId: {message_id}] Traceback: {traceback.format_exc()}")
+        return False  # Unexpected error, will retry
 
 
-def get_restaurant_recommendations(cuisine: str, count: int = 5) -> List[str]:
+def get_restaurant_recommendations(cuisine: str, request_id: str, message_id: str, count: int = 5) -> List[str]:
     try:
         opensearch_endpoint = os.environ.get('OPENSEARCH_ENDPOINT')
         if not opensearch_endpoint:
-            logger.warning("OPENSEARCH_ENDPOINT not set, using fallback method")
-            return get_random_restaurants_from_dynamodb(cuisine, count)
+            logger.warning(f"[RequestId: {request_id}] [MessageId: {message_id}] OPENSEARCH_ENDPOINT not set, using fallback method")
+            return get_random_restaurants_from_dynamodb(cuisine, count, request_id, message_id)
 
         opensearch_client = get_opensearch_client(opensearch_endpoint)
 
@@ -167,12 +218,12 @@ def get_restaurant_recommendations(cuisine: str, count: int = 5) -> List[str]:
         hits = response['hits']['hits']
         restaurant_ids = [hit['_source']['RestaurantID'] for hit in hits]
 
-        logger.info(f"Retrieved {len(restaurant_ids)} restaurant IDs for {cuisine}")
+        logger.info(f"[RequestId: {request_id}] [MessageId: {message_id}] Retrieved {len(restaurant_ids)} restaurant IDs for {cuisine}")
         return restaurant_ids
 
     except Exception as e:
-        logger.error(f"Error querying OpenSearch: {str(e)}")
-        return get_random_restaurants_from_dynamodb(cuisine, count)
+        logger.error(f"[RequestId: {request_id}] [MessageId: {message_id}] Error querying OpenSearch: {str(e)}")
+        return get_random_restaurants_from_dynamodb(cuisine, count, request_id, message_id)
 
 
 def get_opensearch_client(endpoint: str):
@@ -197,7 +248,7 @@ def get_opensearch_client(endpoint: str):
     )
 
 
-def get_random_restaurants_from_dynamodb(cuisine: str, count: int = 5) -> List[str]:
+def get_random_restaurants_from_dynamodb(cuisine: str, count: int, request_id: str, message_id: str) -> List[str]:
     try:
         dynamodb = get_dynamodb_resource()
         table_name = os.environ.get('DYNAMODB_TABLE_NAME', 'yelp-restaurants')
@@ -214,15 +265,15 @@ def get_random_restaurants_from_dynamodb(cuisine: str, count: int = 5) -> List[s
         if len(restaurant_ids) > count:
             restaurant_ids = random.sample(restaurant_ids, count)
 
-        logger.info(f"Retrieved {len(restaurant_ids)} restaurant IDs from DynamoDB fallback")
+        logger.info(f"[RequestId: {request_id}] [MessageId: {message_id}] Retrieved {len(restaurant_ids)} restaurant IDs from DynamoDB fallback")
         return restaurant_ids
 
     except Exception as e:
-        logger.error(f"Error getting restaurants from DynamoDB: {str(e)}")
+        logger.error(f"[RequestId: {request_id}] [MessageId: {message_id}] Error getting restaurants from DynamoDB: {str(e)}")
         return []
 
 
-def get_restaurant_details_from_dynamodb(restaurant_ids: List[str]) -> List[Dict[str, Any]]:
+def get_restaurant_details_from_dynamodb(restaurant_ids: List[str], request_id: str, message_id: str) -> List[Dict[str, Any]]:
     try:
         dynamodb = get_dynamodb_resource()
         table_name = os.environ.get('DYNAMODB_TABLE_NAME', 'yelp-restaurants')
@@ -251,21 +302,24 @@ def get_restaurant_details_from_dynamodb(restaurant_ids: List[str]) -> List[Dict
                     restaurants.append(restaurant)
 
             except Exception as e:
-                logger.error(f"Error getting restaurant {restaurant_id}: {str(e)}")
+                logger.error(f"[RequestId: {request_id}] [MessageId: {message_id}] Error getting restaurant {restaurant_id}: {str(e)}")
                 continue
 
-        logger.info(f"Retrieved details for {len(restaurants)} restaurants")
+        logger.info(f"[RequestId: {request_id}] [MessageId: {message_id}] Retrieved details for {len(restaurants)} restaurants")
         return restaurants
 
     except Exception as e:
-        logger.error(f"Error getting restaurant details: {str(e)}")
+        logger.error(f"[RequestId: {request_id}] [MessageId: {message_id}] Error getting restaurant details: {str(e)}")
         return []
 
 
-def send_recommendations_email(request_data: Dict[str, Any], restaurants: List[Dict[str, Any]]):
+def send_recommendations_email(request_data: Dict[str, Any], restaurants: List[Dict[str, Any]], request_id: str, message_id: str):
     try:
         ses = get_ses_client()
         sender_email = os.environ.get('SES_SENDER_EMAIL', 'noreply@diningconcierge.com')
+        recipient_email = request_data['email']
+
+        logger.info(f"[RequestId: {request_id}] [MessageId: {message_id}] Attempting to send email to: {recipient_email}")
 
         subject = f"Restaurant Recommendations for {request_data['cuisine']} Cuisine"
 
@@ -275,7 +329,7 @@ def send_recommendations_email(request_data: Dict[str, Any], restaurants: List[D
         response = ses.send_email(
             Source=sender_email,
             Destination={
-                'ToAddresses': [request_data['email']]
+                'ToAddresses': [recipient_email]
             },
             Message={
                 'Subject': {
@@ -295,17 +349,32 @@ def send_recommendations_email(request_data: Dict[str, Any], restaurants: List[D
             }
         )
 
-        logger.info(f"Email sent successfully to {request_data['email']}: {response['MessageId']}")
+        ses_message_id = response['MessageId']
+        logger.info(f"[RequestId: {request_id}] [MessageId: {message_id}] Email sent successfully to {recipient_email} - SES MessageId: {ses_message_id}")
 
     except Exception as e:
-        logger.error(f"Error sending email: {str(e)}")
+        # Log detailed error information for DLQ debugging
+        error_type = type(e).__name__
+        error_message = str(e)
+        logger.error(
+            f"[RequestId: {request_id}] [MessageId: {message_id}] "
+            f"SES send_email FAILED - "
+            f"Error Type: {error_type} - "
+            f"Error Message: {error_message} - "
+            f"Recipient: {request_data.get('email', 'unknown')} - "
+            f"Sender: {sender_email}"
+        )
+        # Re-raise to trigger retry/DLQ mechanism
         raise
 
 
-def send_no_results_email(request_data: Dict[str, Any]):
+def send_no_results_email(request_data: Dict[str, Any], request_id: str, message_id: str):
     try:
         ses = get_ses_client()
         sender_email = os.environ.get('SES_SENDER_EMAIL', 'noreply@diningconcierge.com')
+        recipient_email = request_data['email']
+
+        logger.info(f"[RequestId: {request_id}] [MessageId: {message_id}] Attempting to send no-results email to: {recipient_email}")
 
         subject = f"No {request_data['cuisine']} Restaurants Found"
 
@@ -325,10 +394,10 @@ Best regards,
 The Dining Concierge Team
         """
 
-        ses.send_email(
+        response = ses.send_email(
             Source=sender_email,
             Destination={
-                'ToAddresses': [request_data['email']]
+                'ToAddresses': [recipient_email]
             },
             Message={
                 'Subject': {
@@ -344,10 +413,21 @@ The Dining Concierge Team
             }
         )
 
-        logger.info(f"No results email sent to {request_data['email']}")
+        ses_message_id = response['MessageId']
+        logger.info(f"[RequestId: {request_id}] [MessageId: {message_id}] No-results email sent to {recipient_email} - SES MessageId: {ses_message_id}")
 
     except Exception as e:
-        logger.error(f"Error sending no results email: {str(e)}")
+        error_type = type(e).__name__
+        error_message = str(e)
+        logger.error(
+            f"[RequestId: {request_id}] [MessageId: {message_id}] "
+            f"Error sending no-results email - "
+            f"Error Type: {error_type} - "
+            f"Error Message: {error_message} - "
+            f"Recipient: {recipient_email}"
+        )
+        # Re-raise to trigger retry/DLQ mechanism
+        raise
 
 
 def format_recommendations_email_html(request_data: Dict[str, Any], restaurants: List[Dict[str, Any]]) -> str:

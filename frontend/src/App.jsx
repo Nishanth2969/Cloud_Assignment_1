@@ -1,6 +1,3 @@
-
-
-
 import { useState, useEffect, useRef } from 'react'
 import { IoSend, IoRestaurant, IoLocationSharp, IoChatbubbleEllipses } from 'react-icons/io5'
 import { MdRestaurantMenu } from 'react-icons/md'
@@ -23,72 +20,63 @@ function App() {
   }, [messages])
 
   const sendMessage = async () => {
-      if (!inputText.trim()) return
+    if (!inputText.trim()) return
 
-      const userMessage = {
-        id: Date.now(),
-        text: inputText,
-        sender: 'user'
-      }
-
-      setMessages(prev => [...prev, userMessage])
-      setInputText('')
-      setIsTyping(true)
-
-      try {
-        const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
-
-        const response = await fetch(`${apiUrl}/chatbot`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            messages: [
-              {
-                type: "unstructured",
-                unstructured: {
-                  text: inputText
-                }
-              }
-            ]
-          })
-        })
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
-        }
-
-        const data = await response.json()
-
-        // Extract the bot's response from the correct structure
-        const botText = data.messages?.[0]?.unstructured?.text || "I'm sorry, I didn't understand that."
-
-        const botMessage = {
-          id: Date.now() + 1,
-          text: botText,
-          sender: 'bot'
-        }
-
-        setTimeout(() => {
-          setMessages(prev => [...prev, botMessage])
-          setIsTyping(false)
-        }, 1000)
-
-      } catch (error) {
-        console.error('Error sending message:', error)
-        const errorMessage = {
-          id: Date.now() + 1,
-          text: "I'm having trouble connecting right now. Please try again in a moment.",
-          sender: 'bot'
-        }
-
-        setTimeout(() => {
-          setMessages(prev => [...prev, errorMessage])
-          setIsTyping(false)
-        }, 1000)
-      }
+    const userMessage = {
+      id: Date.now(),
+      text: inputText,
+      sender: 'user'
     }
+
+    setMessages(prev => [...prev, userMessage])
+    setInputText('')
+    setIsTyping(true)
+
+    try {
+      const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
+      
+      const response = await fetch(`${apiUrl}/chatbot`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: inputText,
+          sessionId: sessionId
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const data = await response.json()
+      
+      const botMessage = {
+        id: Date.now() + 1,
+        text: data.message || "I'm sorry, I didn't understand that. Could you please try again?",
+        sender: 'bot'
+      }
+
+      setTimeout(() => {
+        setMessages(prev => [...prev, botMessage])
+        setIsTyping(false)
+      }, 1000)
+
+    } catch (error) {
+      console.error('Error sending message:', error)
+      const errorMessage = {
+        id: Date.now() + 1,
+        text: "I'm having trouble connecting right now. Please try again in a moment.",
+        sender: 'bot'
+      }
+      
+      setTimeout(() => {
+        setMessages(prev => [...prev, errorMessage])
+        setIsTyping(false)
+      }, 1000)
+    }
+  }
 
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -336,7 +324,7 @@ function App() {
             transform: translateY(0);
           }
         }
-
+        
         @keyframes typing {
           0%, 60%, 100% {
             transform: translateY(0);
@@ -347,25 +335,25 @@ function App() {
             opacity: 1;
           }
         }
-
+        
         *::-webkit-scrollbar {
           width: 8px;
         }
-
+        
         *::-webkit-scrollbar-track {
           background: rgba(255, 255, 255, 0.05);
           border-radius: 4px;
         }
-
+        
         *::-webkit-scrollbar-thumb {
           background: rgba(212, 175, 55, 0.4);
           border-radius: 4px;
         }
-
+        
         *::-webkit-scrollbar-thumb:hover {
           background: rgba(212, 175, 55, 0.6);
         }
-
+        
         textarea::placeholder {
           color: #888;
         }
@@ -400,14 +388,14 @@ function App() {
 
           <div style={styles.messagesContainer}>
             {messages.map((message) => (
-              <div
-                key={message.id}
+              <div 
+                key={message.id} 
                 style={{
                   ...styles.message,
                   ...(message.sender === 'user' ? styles.messageUser : styles.messageBot)
                 }}
               >
-                <div
+                <div 
                   style={{
                     ...styles.avatar,
                     ...(message.sender === 'bot' ? styles.avatarBot : styles.avatarUser)
@@ -419,7 +407,7 @@ function App() {
                     'You'
                   )}
                 </div>
-                <div
+                <div 
                   style={{
                     ...styles.messageContent,
                     ...(message.sender === 'bot' ? styles.messageContentBot : styles.messageContentUser)
@@ -429,7 +417,7 @@ function App() {
                 </div>
               </div>
             ))}
-
+            
             {isTyping && (
               <div style={{ ...styles.message, ...styles.messageBot }}>
                 <div style={{ ...styles.avatar, ...styles.avatarBot }}>
@@ -462,8 +450,8 @@ function App() {
                 ...(isFocused ? styles.textareaFocus : {})
               }}
             />
-            <button
-              onClick={sendMessage}
+            <button 
+              onClick={sendMessage} 
               disabled={!inputText.trim() || isTyping}
               onMouseEnter={() => setIsHovered(true)}
               onMouseLeave={() => setIsHovered(false)}
@@ -484,4 +472,3 @@ function App() {
 }
 
 export default App
-

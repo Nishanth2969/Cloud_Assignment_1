@@ -22,59 +22,58 @@ The application follows a serverless microservices architecture implementing a D
 ## AWS Resources
 
 ### Frontend & API
-- **S3 Bucket**: [TO BE FILLED BY YOGA]
-- **CloudFront Distribution**: [TO BE FILLED BY YOGA]
-- **API Gateway**: [TO BE FILLED BY YOGA]
+- [**S3 Bucket**](https://us-east-1.console.aws.amazon.com/s3/buckets?region=us-east-1&bucketType=general)
+- [**API Gateway**](https://us-east-1.console.aws.amazon.com/apigateway/main/apis?api=unselected&experience=rest-import&region=us-east-1)
   - Stage: dev
-  - Endpoint: [TO BE FILLED BY YOGA]
+  - Endpoint: /chatbot
 
 ### Lambda Functions
-- **LF0 (Chat Proxy)**: [TO BE FILLED BY YOGA]
+- [**LF0 (Chat Proxy)**](https://us-east-1.console.aws.amazon.com/lambda/home?region=us-east-1#/functions/LF0-proxy?subtab=general&tab=code): 
   - Runtime: Python 3.9
   - Purpose: API Gateway integration, proxy requests to Amazon Lex using AWS SDK
   - Function: Extract text from API request, send to Lex, return response
-- **LF1 (Lex Hook)**: [TO BE FILLED BY YOGA]
+- [**LF1 (Lex Hook)**](https://us-east-1.console.aws.amazon.com/lambda/home?region=us-east-1#/functions/LF1-lex-hook?subtab=envVars&tab=configure)
   - Runtime: Python 3.9
   - Purpose: Lex code hook for intent processing and validation
   - Function: Handle GreetingIntent, ThankYouIntent, DiningSuggestionsIntent, push to SQS
-- **LF2 (Suggestions Worker)**: [TO BE FILLED BY YOGA]
+- [**LF2 (Suggestions Worker)](https://us-east-1.console.aws.amazon.com/lambda/home?region=us-east-1#/functions/LF2-suggestions-worker?subtab=envVars&tab=monitoring)
   - Runtime: Python 3.9
   - Purpose: Queue worker for processing restaurant suggestions
   - Function: Pull from SQS, query ElasticSearch, fetch from DynamoDB, send email via SES
 
 ### Data Services
-- **DynamoDB Table**: [TO BE FILLED BY YOGA]
+- [**DynamoDB Table**](https://us-east-1.console.aws.amazon.com/dynamodbv2/home?region=us-east-1#tables)
   - Table Name: yelp-restaurants
   - Primary Key: business_id
   - Capacity: On-demand
   - Required Fields: Business ID, Name, Address, Coordinates, Number of Reviews, Rating, Zip Code, insertedAtTimestamp
-- **ElasticSearch Domain**: [TO BE FILLED BY YOGA]
+- [**ElasticSearch Domain**](https://us-east-1.console.aws.amazon.com/aos/home?region=us-east-1#opensearch/domains)
   - Index: restaurants
   - Document Type: Restaurant
   - Stored Fields: RestaurantID, Cuisine
-- **SQS Queue**: [TO BE FILLED BY YOGA]
+- [**SQS Queue**](https://us-east-1.console.aws.amazon.com/sqs/v3/home?region=us-east-1#/queues): 
   - Queue Name: q-dining-suggestions
   - Visibility Timeout: 300 seconds
-- **Dead Letter Queue (DLQ)**: [TO BE FILLED BY YOGA]
+- [**Dead Letter Queue (DLQ)**](https://us-east-1.console.aws.amazon.com/sqs/v3/home?region=us-east-1#/queues/https%3A%2F%2Fsqs.us-east-1.amazonaws.com%2F141507053403%2Fq-dining-suggestions-dlq):
   - Queue Name: q-dining-suggestions-dlq
   - Max Receive Count: 3-5
   - Purpose: Handle failed email delivery attempts
 
 ### AI & Communication
-- **Amazon Lex Bot**: [TO BE FILLED BY YOGA]
+- [**Amazon Lex Bot**](https://us-east-1.console.aws.amazon.com/lexv2/home?region=us-east-1#bot/UGJJGXTCJ9)
   - Bot Name: DiningConciergeBot
   - Locale: en_US
   - Intents: GreetingIntent, ThankYouIntent, DiningSuggestionsIntent
-- **SES Configuration**: [TO BE FILLED BY YOGA]
+- [**SES Configuration**](https://us-east-1.console.aws.amazon.com/ses/home?region=us-east-1#/identities):
   - Sender Email: [TO BE FILLED BY YOGA]
   - Region: us-east-1
 
 ### Scheduling & Monitoring
-- **EventBridge Scheduler**: [TO BE FILLED BY YOGA]
+- [**EventBridge Scheduler**](https://us-east-1.console.aws.amazon.com/scheduler/home?region=us-east-1#schedules/default/LF2-trigger-every-minute): 
   - Schedule: rate(1 minute)
   - Target: LF2 Lambda function
   - Purpose: Automated queue worker polling
-- **CloudWatch Logs**: [TO BE FILLED BY YOGA]
+- [**CloudWatch Logs**](https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups/log-group/$252Faws$252Flambda$252FLF2-suggestions-worker/log-events/2025$252F10$252F10$252F$255B$2524LATEST$255Db09006504e7b43bfa7a4a9f3094d57f1): 
   - Log Groups for each Lambda function
   - DLQ failure logging with requestId and error reasons
 

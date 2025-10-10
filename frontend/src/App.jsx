@@ -7,7 +7,7 @@ import { MdRestaurantMenu } from 'react-icons/md'
 
 function App() {
   const [messages, setMessages] = useState([
-    { id: 1, text: "Hello! I'm your dining concierge. I can help you find great restaurants in Manhattan. What type of cuisine are you looking for?", sender: 'bot' }
+    { id: 1, text: "Hello! I'm your dining concierge. I can help you find great restaurants in Manhattan.", sender: 'bot' }
   ])
   const [inputText, setInputText] = useState('')
   const [isTyping, setIsTyping] = useState(false)
